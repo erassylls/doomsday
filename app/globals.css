@@ -1285,3 +1285,12 @@ h2, h3 { color: var(--cqa-ink); font-weight: 700; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
+/* Organizer appendix: source numbering and submission entry points. */
+.turn-number { display: inline-flex; flex-shrink: 0; color: #50695d; font-variant-numeric: tabular-nums; font-size: 10px; font-weight: 700; }
+.dialogue-dataset-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 20px; border-top: 1px solid #e6ebe4; background: #f7f9f4; }
+.dialogue-dataset-actions > span { flex: 1 1 220px; color: #5b7063; font-size: 11px; line-height: 1.6; }
+.import-requirements { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 15px; border: 1px solid #dae7d8; border-radius: 13px; background: #f3f7ee; color: #345443; }
+.import-requirements > span { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.import-requirements strong { color: #153e2d; font-size: 13px; }
+.import-requirements p { grid-column: 1 / -1; margin: 0; font-size: 11px; line-height: 1.7; }
+@media (max-width: 520px) { .dialogue-dataset-actions { padding: 12px; } .dialogue-dataset-actions .button { flex: 1 1 auto; } }

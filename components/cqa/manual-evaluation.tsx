@@ -84,7 +84,7 @@ export function ManualEvaluation({ conversation, checklist, onClose, onSaved }: 
   }
   return <Modal title="Оценка эксперта" subtitle={conversation.conversation_id + ' · ' + checklist.name + ' · версия ' + checklist.version} onClose={onClose} wide busy={busy}>
     <div className="modal-content">
-      <div className="notice notice-soft"><UserRoundPen size={18} /><span>Вы выставляете оценки самостоятельно. Результат будет отмечен как оценка эксперта и сохранён отдельно от запусков AI.</span></div>
+      <div className="notice notice-soft"><UserRoundPen size={18} /><span>Вы выставляете оценки самостоятельно. Результат будет отмечен как оценка эксперта и сохранён отдельно от запусков AI. Официальная сдача использует исходные AI-запуски. Номера реплик ниже соответствуют полному исходному транскрипту.</span></div>
       <div className="manual-progress"><span>Заполнено критериев</span><strong>{complete} / {checklist.criteria.length}</strong><div><i style={{ width: (complete / Math.max(1, checklist.criteria.length) * 100) + '%' }} /></div></div>
       {error && <div className="notice notice-error" role="alert">{error}</div>}
       <div className="manual-list">
@@ -107,14 +107,14 @@ export function ManualEvaluation({ conversation, checklist, onClose, onSaved }: 
                 if (event.target === event.currentTarget) setEvidenceOpen(criterion.id, event.currentTarget.open);
               }}>
                 <summary>Выбрать реплики-доказательства <span>{draft.evidence.length > 0 ? draft.evidence.length + ' выбрано' : 'Не выбраны'}</span><ChevronDown size={15} /></summary>
-                <div className="evidence-options">{conversation.transcript.map((message) => <label key={message.id}>
+                <div className="evidence-options">{conversation.transcript.map((message, index) => <label key={message.id}>
                   <input type="checkbox" checked={draft.evidence.includes(message.id)} onChange={(event) => update(criterion.id, { evidence: event.target.checked ? [...draft.evidence, message.id] : draft.evidence.filter((id) => id !== message.id) })} />
-                  <span><small>{speakerLabels[message.speaker]} · {message.timestamp}</small>{message.text}</span>
+                  <span><small>#{index + 1} · {speakerLabels[message.speaker]} · {message.timestamp}</small>{message.text}</span>
                 </label>)}</div>
               </details>
               <div className="form-field"><span>Проверенный участок <span className="muted regular">(если действие отсутствует)</span></span><div className="range-fields">
-                <select className="field" aria-label={'Начало участка: ' + criterion.name} value={draft.start} onChange={(event) => update(criterion.id, { start: event.target.value })}><option value="">От сообщения…</option>{conversation.transcript.map((message) => <option key={message.id} value={message.id}>{message.timestamp} · {speakerLabels[message.speaker]} · {message.text.slice(0, 55)}</option>)}</select>
-                <select className="field" aria-label={'Конец участка: ' + criterion.name} value={draft.end} onChange={(event) => update(criterion.id, { end: event.target.value })}><option value="">До сообщения…</option>{conversation.transcript.map((message) => <option key={message.id} value={message.id}>{message.timestamp} · {speakerLabels[message.speaker]} · {message.text.slice(0, 55)}</option>)}</select>
+                <select className="field" aria-label={'Начало участка: ' + criterion.name} value={draft.start} onChange={(event) => update(criterion.id, { start: event.target.value })}><option value="">От сообщения…</option>{conversation.transcript.map((message, index) => <option key={message.id} value={message.id}>#{index + 1} · {message.timestamp} · {speakerLabels[message.speaker]} · {message.text.slice(0, 55)}</option>)}</select>
+                <select className="field" aria-label={'Конец участка: ' + criterion.name} value={draft.end} onChange={(event) => update(criterion.id, { end: event.target.value })}><option value="">До сообщения…</option>{conversation.transcript.map((message, index) => <option key={message.id} value={message.id}>#{index + 1} · {message.timestamp} · {speakerLabels[message.speaker]} · {message.text.slice(0, 55)}</option>)}</select>
               </div></div>
             </div>
           </details>;

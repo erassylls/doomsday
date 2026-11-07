@@ -14,7 +14,8 @@
     "db:generate": "drizzle-kit generate",
     "test": "node scripts/test.mjs",
     "setup:local": "node scripts/setup-local.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "validate:submission": "node scripts/validate-results.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

@@ -17,6 +17,7 @@ interface OverviewDashboardProps {
   onDialogs: () => void;
   onReview: () => void;
   onAccuracy: () => void;
+  onSubmission: () => void;
   onAppeals: () => void;
   onSettings: () => void;
   onChecklist: () => void;
@@ -31,7 +32,7 @@ function countNoun(value: number, forms: readonly [string, string, string]): str
   return `${countText(value)} ${forms[lastTwo >= 11 && lastTwo <= 14 ? 2 : last === 1 ? 0 : last >= 2 && last <= 4 ? 1 : 2]}`;
 }
 
-export function OverviewDashboard({ state, latest, activeChecklist, ready, evaluatingId, onImport, onDialogs, onReview, onAccuracy, onAppeals, onSettings, onChecklist, onOpenConversation }: OverviewDashboardProps) {
+export function OverviewDashboard({ state, latest, activeChecklist, ready, evaluatingId, onImport, onDialogs, onReview, onAccuracy, onSubmission, onAppeals, onSettings, onChecklist, onOpenConversation }: OverviewDashboardProps) {
   const [demoOpen, setDemoOpen] = useState(false);
   const conversations = state.conversations;
   const evaluated = conversations.map((conversation) => latest.get(conversation.id)).filter((item): item is Evaluation => !!item);
@@ -83,6 +84,8 @@ export function OverviewDashboard({ state, latest, activeChecklist, ready, evalu
         <Metric label="Средний балл" value={scoreText(average)} unit={average === null ? undefined : '/ 100'} detail={numeric.length ? `По последней оценке · ${countNoun(numeric.length, ['диалог', 'диалога', 'диалогов'])}` : 'Появится после первой оценки'} icon={<Activity size={19} />} />
         <Metric label="Открытые апелляции" value={countText(pendingAppeals.length)} detail={pendingAppeals.length ? 'Ожидают вашего решения' : 'Нет ожидающих рассмотрения'} icon={<Scale size={19} />} onClick={onAppeals} />
       </div>
+
+      <section className="studio-submission-entry" aria-labelledby="submission-entry-title"><div><span className="studio-section-eyebrow">ФОРМАТ СДАЧИ · JSON 1.0</span><h2 id="submission-entry-title">От готовой оценки к results.json</h2><p>DEV: 60 чатов и 5 звонков. PROD: 10 контрольных чатов. Проверка состава, критериев и исходных ID перед отправкой в Git.</p></div><button className="studio-button studio-button-forest" onClick={onSubmission}>Подготовить результаты<ArrowUpRight size={17} /></button></section>
 
       <div className="studio-actions-grid">
         <button className="studio-action studio-review-action" onClick={onReview}>

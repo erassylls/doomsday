@@ -29,6 +29,14 @@ export const evaluations = sqliteTable('cqa_evaluations', {
   updatedAt: text('updated_at').notNull(),
 }, (table) => [index('cqa_evaluation_conversation_idx').on(table.conversationId)]);
 
+export const evaluationFailures = sqliteTable('cqa_evaluation_failures', {
+  id: text('id').primaryKey(),
+  conversationId: text('conversation_id').notNull().references(() => conversations.id),
+  checklistId: text('checklist_id').notNull().references(() => checklists.id),
+  payload: text('payload').notNull(),
+  createdAt: text('created_at').notNull(),
+}, (table) => [index('cqa_failure_conversation_idx').on(table.conversationId, table.createdAt)]);
+
 export const appeals = sqliteTable('cqa_appeals', {
   id: text('id').primaryKey(),
   evaluationId: text('evaluation_id').notNull().references(() => evaluations.id),

@@ -5,7 +5,7 @@ import { EVALUATOR_REVISION, EvaluationError, evaluateConversation } from './eva
 import { DEFAULT_SETTINGS } from './types';
 import type {
   Appeal, AppState, Checklist, Conversation, Criterion, CriterionResult,
-  Evaluation, Language, Message, ProviderSettings, Rating, Speaker, Usage,
+  Evaluation, EvaluationFailure, Language, Message, ModelMode, ProviderSettings, Rating, Speaker, Usage,
 } from './types';
 
 type JsonObject = Record<string, unknown>;
@@ -42,8 +42,9 @@ function textValue(value: unknown, label: string, max = 4000, allowEmpty = false
   return value.trim();
 }
 
-function identifier(value: unknown, label: string, max = 240): string {
-  const id = textValue(value, label, max);
+function identifier(value: unknown, label: string, max = 240, preserve = false): string {
+  const validated = textValue(value, label, max);
+  const id = preserve ? value as string : validated;
   if (/[\u0000-\u001f\u007f]/.test(id)) throw new ApiError(400, `${label}: недопустимые управляющие символы.`);
   return id;
 }
@@ -177,20 +178,22 @@ function serverKeyMatches(baseUrl: string): boolean {
 export async function loadState(): Promise<AppState> {
   await ensureDefaults();
   const db = database();
-  const [conversationRows, checklistRows, evaluationRows, appealRows, settings, active] = await Promise.all([
+  const [conversationRows, checklistRows, evaluationRows, failureRows, appealRows, settings, active] = await Promise.all([
     db.prepare('SELECT payload FROM cqa_conversations ORDER BY dataset_group_id, id').all<PayloadRow>(),
     db.prepare('SELECT payload FROM cqa_checklists ORDER BY version DESC').all<PayloadRow>(),
     db.prepare('SELECT payload FROM cqa_evaluations ORDER BY created_at DESC, id DESC').all<PayloadRow>(),
+    db.prepare('SELECT payload FROM cqa_evaluation_failures ORDER BY created_at DESC, id DESC').all<PayloadRow>(),
     db.prepare('SELECT payload FROM cqa_appeals ORDER BY created_at DESC, id DESC').all<PayloadRow>(),
     setting<ProviderSettings>('provider'),
     setting<string>('activeChecklistId'),
   ]);
-  const currentSettings = settings || { ...DEFAULT_SETTINGS };
+  const currentSettings = { ...DEFAULT_SETTINGS, ...settings };
   return {
     conversations: conversationRows.results.map((row) => JSON.parse(row.payload)),
     checklists: checklistRows.results.map((row) => JSON.parse(row.payload)),
     activeChecklistId: active || DEFAULT_CHECKLIST.id,
     evaluations: evaluationRows.results.map((row) => JSON.parse(row.payload)),
+    evaluationFailures: failureRows.results.map((row) => JSON.parse(row.payload)),
     appeals: appealRows.results.map((row) => JSON.parse(row.payload)),
     settings: currentSettings,
     providerConfigured: !!currentSettings.model.trim() && serverKeyMatches(currentSettings.baseUrl),
@@ -214,7 +217,8 @@ function importEnvelope(payload: unknown): { records: unknown[]; groupId?: strin
 
 function normalizeConversation(raw: unknown, groupId: string, now: string): Conversation {
   const record = object(raw, 'Диалог');
-  const externalId = identifier(record.conversation_id, 'conversation_id', 180);
+  // The submission contract requires the exact source ID, including its whitespace.
+  const externalId = identifier(record.conversation_id, 'conversation_id', 180, true);
   if (record.channel !== 'agent chat' && record.channel !== 'voice call') {
     throw new ApiError(400, `${externalId}: channel должен быть agent chat или voice call.`);
   }
@@ -415,6 +419,14 @@ export async function createChecklist(request: Request): Promise<Checklist> {
   return checklist;
 }
 
+function modelMode(value: unknown): ModelMode {
+  if (value === undefined) return 'external_api';
+  if (value !== 'local' && value !== 'external_api' && value !== 'hybrid') {
+    throw new ApiError(400, 'Режим модели должен быть local, external_api или hybrid.', 'INVALID_MODEL_MODE');
+  }
+  return value;
+}
+
 function normalizeSettings(raw: JsonObject): ProviderSettings {
   if ('apiKey' in raw || 'OPENAI_API_KEY' in raw) {
     throw new ApiError(400, 'Ключ модели не сохраняется в настройках. Передавайте его только при запуске оценки.');
@@ -432,6 +444,7 @@ function normalizeSettings(raw: JsonObject): ProviderSettings {
   return {
     baseUrl: validateProviderUrl(raw.baseUrl),
     model: textValue(raw.model, 'Название модели', 200, true),
+    modelMode: modelMode(raw.modelMode),
     inputPrice: price(raw.inputPrice, 'Входящие токены'),
     outputPrice: price(raw.outputPrice, 'Исходящие токены'),
     strictJson: raw.strictJson, verification: raw.verification,
@@ -451,7 +464,7 @@ export async function saveSettings(request: Request): Promise<{ ok: true }> {
 
 async function evaluationInputs(body: JsonObject): Promise<{ conversation: Conversation; contentHash: string; checklist: Checklist }> {
   await ensureDefaults();
-  const id = identifier(body.conversationId, 'Диалог');
+  const id = identifier(body.conversationId, 'Диалог', 250, true);
   const db = database();
   const row = await db.prepare('SELECT payload, content_hash FROM cqa_conversations WHERE id = ?').bind(id).first<ConversationRow>();
   if (!row) throw new ApiError(404, 'Диалог не найден. Сначала импортируйте данные.', 'CONVERSATION_NOT_FOUND');
@@ -517,59 +530,124 @@ async function persistEvaluation(input: {
   return evaluation;
 }
 
+function providerFailure(error: unknown, apiKey: string): ApiError {
+  if (error instanceof EvaluationError) {
+    const safeMessage = error.message.split(apiKey).join('[ключ скрыт]').replace(/sk-[A-Za-z0-9_-]+/g, '[ключ скрыт]');
+    const code = error.code;
+    const status = code === 'AI_TIMEOUT' ? 504
+      : code === 'AI_HTTP_429' ? 429
+        : ['AI_KEY_REQUIRED', 'AI_MODEL_REQUIRED'].includes(code) ? 409
+          : ['AI_VALIDATION_FAILED', 'AI_OUTPUT_TRUNCATED', 'AI_REFUSAL'].includes(code) ? 422
+            : ['CONTEXT_TOO_LARGE', 'INVALID_CHECKLIST', 'INVALID_TRANSCRIPT', 'EMPTY_TRANSCRIPT', 'INVALID_PROVIDER_URL', 'AI_KEY_INVALID'].includes(code) ? 400
+              : 502;
+    return new ApiError(status, safeMessage, code, error.usage);
+  }
+  const message = error instanceof Error ? error.message : '';
+  if (/401|unauthori[sz]ed|authentication|invalid.{0,20}key/i.test(message)) {
+    return new ApiError(502, 'Провайдер отклонил API-ключ. Проверьте ключ и адрес сервиса.', 'PROVIDER_AUTH_ERROR');
+  }
+  if (/429|quota|rate.limit/i.test(message)) {
+    return new ApiError(429, 'Провайдер ограничил запросы или исчерпан лимит API. Проверьте квоту и повторите позже.', 'PROVIDER_LIMIT');
+  }
+  if (/timeout|abort|timed.out|врем/i.test(message)) {
+    return new ApiError(504, 'Модель не ответила вовремя. Повторите запуск или выберите более быструю модель.', 'PROVIDER_TIMEOUT');
+  }
+  if (/json|schema|формат|валидац|критери|доказатель|реплик/i.test(message)) {
+    return new ApiError(422, 'Модель вернула непроверяемый результат. Проверьте формат, значения и доказательства.', 'MODEL_OUTPUT_INVALID');
+  }
+  return new ApiError(502, 'Не удалось получить ответ модели. Проверьте название модели, адрес API и доступ к сервису.', 'PROVIDER_ERROR');
+}
+
+/** Persist only our own category descriptions, never model output or raw provider errors. */
+function failureReason(code: string): string {
+  const reasons: Record<string, string> = {
+    MODEL_NOT_CONFIGURED: 'AI-оценка не выполнена: модель или API-ключ не настроены.',
+    AI_MODEL_REQUIRED: 'AI-оценка не выполнена: модель не выбрана.',
+    AI_KEY_REQUIRED: 'AI-оценка не выполнена: API-ключ не задан.',
+    AI_KEY_INVALID: 'AI-оценка не выполнена: неверный формат API-ключа.',
+    INVALID_PROVIDER_URL: 'AI-оценка не выполнена: неверный адрес API модели.',
+    INVALID_REQUEST: 'AI-оценка не выполнена: параметры запуска не прошли проверку.',
+    INVALID_CHECKLIST: 'AI-оценка не выполнена: чек-лист или его JSON-схема не прошли проверку.',
+    INVALID_TRANSCRIPT: 'AI-оценка не выполнена: транскрипт не прошёл проверку.',
+    EMPTY_TRANSCRIPT: 'AI-оценка не выполнена: транскрипт пуст.',
+    CONTEXT_TOO_LARGE: 'Диалог, чек-лист и база знаний превышают допустимый размер запроса.',
+    AI_TIMEOUT: 'Модель не ответила за отведённое время.',
+    PROVIDER_TIMEOUT: 'Модель не ответила за отведённое время.',
+    AI_NETWORK_ERROR: 'Не удалось установить соединение с API модели.',
+    AI_REDIRECT_REJECTED: 'API модели вернул запрещённое перенаправление; нужен конечный адрес подключения.',
+    PROVIDER_AUTH_ERROR: 'Провайдер отклонил API-ключ или доступ к модели.',
+    PROVIDER_LIMIT: 'Провайдер ограничил запросы или исчерпана квота.',
+    AI_INVALID_HTTP_JSON: 'API модели вернул некорректный JSON.',
+    AI_RESPONSE_TOO_LARGE: 'Ответ API модели превысил допустимый размер.',
+    AI_OUTPUT_TRUNCATED: 'Ответ модели обрезан из-за ограничения размера.',
+    AI_REFUSAL: 'Модель отказалась оценивать этот диалог.',
+    AI_VALIDATION_FAILED: 'Ответ модели не прошёл проверку формата, значений или доказательств после попытки исправления.',
+    MODEL_OUTPUT_INVALID: 'Ответ модели не прошёл проверку формата, значений или доказательств.',
+    INVALID_EVALUATION: 'Результат не сохранён: оценки или доказательства не прошли проверку.',
+    TRANSCRIPT_CHANGED: 'Транскрипт изменился во время оценки; результат не сохранён.',
+    EVALUATION_SAVE_FAILED: 'Не удалось сохранить результат оценки в хранилище. Требуется повторный запуск.',
+  };
+  if (reasons[code]) return reasons[code];
+  const http = /^AI_HTTP_(\d{3})$/.exec(code);
+  if (http) return `API модели вернул HTTP ${http[1]}. Диалог не оценён.`;
+  return 'Не удалось получить проверенный результат AI-оценки. Требуется повторный запуск.';
+}
+
+async function persistEvaluationFailure(
+  inputs: Awaited<ReturnType<typeof evaluationInputs>>, settings: ProviderSettings, error: ApiError,
+): Promise<void> {
+  const code = /^[A-Z][A-Z0-9_]{0,79}$/.test(error.code) ? error.code : 'EVALUATION_FAILED';
+  const failure: EvaluationFailure = {
+    id: `failure-${crypto.randomUUID()}`, conversationId: inputs.conversation.id,
+    checklistId: inputs.checklist.id, model: settings.model, modelMode: modelMode(settings.modelMode),
+    error: failureReason(code), code, createdAt: new Date().toISOString(),
+    transcriptHash: await hash(inputs.conversation.transcript),
+  };
+  await database().prepare(`
+    INSERT INTO cqa_evaluation_failures (id, conversation_id, checklist_id, payload, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).bind(failure.id, failure.conversationId, failure.checklistId, JSON.stringify(failure), failure.createdAt).run();
+}
+
 export async function runEvaluation(request: Request): Promise<Evaluation> {
   const body = await bodyObject(request);
   const inputs = await evaluationInputs(body);
-  const settings = await setting<ProviderSettings>('provider') || DEFAULT_SETTINGS;
-  settings.baseUrl = validateProviderUrl(settings.baseUrl);
-  if (!settings.model.trim()) {
-    throw new ApiError(409, 'Выберите модель в настройках перед запуском AI-оценки.', 'MODEL_NOT_CONFIGURED');
-  }
-  let suppliedKey = '';
-  if (body.apiKey !== undefined) suppliedKey = textValue(body.apiKey, 'API-ключ', 4000, true);
-  if (/[\r\n]/.test(suppliedKey)) throw new ApiError(400, 'API-ключ не должен содержать переносы строк.');
-  const apiKey = suppliedKey || (serverKeyMatches(settings.baseUrl) ? runtime.OPENAI_API_KEY || '' : '');
-  if (!apiKey) {
-    throw new ApiError(409, 'Подключите API-ключ модели в настройках. Автоматическая оценка без подключённой модели не выполняется.', 'MODEL_NOT_CONFIGURED');
-  }
-  let outcome: Awaited<ReturnType<typeof evaluateConversation>>;
+  const settings = { ...DEFAULT_SETTINGS, ...await setting<ProviderSettings>('provider') };
+  settings.modelMode = modelMode(settings.modelMode);
   try {
-    outcome = await evaluateConversation(inputs.conversation, inputs.checklist, settings, apiKey);
+    settings.baseUrl = validateProviderUrl(settings.baseUrl);
+    if (!settings.model.trim()) {
+      throw new ApiError(409, 'Выберите модель в настройках перед запуском AI-оценки.', 'MODEL_NOT_CONFIGURED');
+    }
+    let suppliedKey = '';
+    if (body.apiKey !== undefined) suppliedKey = textValue(body.apiKey, 'API-ключ', 4000, true);
+    if (/[\r\n]/.test(suppliedKey)) throw new ApiError(400, 'API-ключ не должен содержать переносы строк.', 'AI_KEY_INVALID');
+    const apiKey = suppliedKey || (serverKeyMatches(settings.baseUrl) ? runtime.OPENAI_API_KEY || '' : '');
+    if (!apiKey) {
+      throw new ApiError(409, 'Подключите API-ключ модели в настройках. Автоматическая оценка без подключённой модели не выполняется.', 'MODEL_NOT_CONFIGURED');
+    }
+    let outcome: Awaited<ReturnType<typeof evaluateConversation>>;
+    try {
+      outcome = await evaluateConversation(inputs.conversation, inputs.checklist, settings, apiKey);
+    } catch (error) { throw providerFailure(error, apiKey); }
+    const results = normalizeResults(outcome.results);
+    return await persistEvaluation({
+      ...inputs, results, source: 'ai', model: settings.model,
+      usage: outcome.usage, durationMs: outcome.durationMs, warnings: outcome.warnings,
+      runConfig: { promptRevision: EVALUATOR_REVISION, strictJson: settings.strictJson,
+        verification: settings.verification, knowledgeHash: await hash(settings.knowledge || ''),
+        modelMode: settings.modelMode },
+    });
   } catch (error) {
-    if (error instanceof EvaluationError) {
-      const safeMessage = error.message.split(apiKey).join('[ключ скрыт]').replace(/sk-[A-Za-z0-9_-]+/g, '[ключ скрыт]');
-      const code = error.code;
-      const status = code === 'AI_TIMEOUT' ? 504
-        : code === 'AI_HTTP_429' ? 429
-          : ['AI_KEY_REQUIRED', 'AI_MODEL_REQUIRED'].includes(code) ? 409
-            : ['AI_VALIDATION_FAILED', 'AI_OUTPUT_TRUNCATED', 'AI_REFUSAL'].includes(code) ? 422
-              : ['CONTEXT_TOO_LARGE', 'INVALID_CHECKLIST', 'INVALID_TRANSCRIPT', 'EMPTY_TRANSCRIPT', 'INVALID_PROVIDER_URL', 'AI_KEY_INVALID'].includes(code) ? 400
-                : 502;
-      throw new ApiError(status, safeMessage, code, error.usage);
+    const failure = error instanceof ApiError ? error
+      : new ApiError(500, 'Не удалось сохранить результат оценки. Попробуйте запустить её снова.', 'EVALUATION_SAVE_FAILED');
+    try { await persistEvaluationFailure(inputs, settings, failure); }
+    catch (storageError) {
+      // A failed write must not hide the original evaluation failure or expose its details.
+      console.error('CQA evaluation failure could not be recorded', storageError instanceof Error ? storageError.name : 'UnknownError');
     }
-    let message = error instanceof Error ? error.message : '';
-    message = message.split(apiKey).join('[ключ скрыт]').replace(/sk-[A-Za-z0-9_-]+/g, '[ключ скрыт]');
-    if (/401|unauthori[sz]ed|authentication|invalid.{0,20}key/i.test(message)) {
-      throw new ApiError(502, 'Провайдер отклонил API-ключ. Проверьте ключ и адрес сервиса.', 'PROVIDER_AUTH_ERROR');
-    }
-    if (/429|quota|rate.limit/i.test(message)) {
-      throw new ApiError(429, 'Провайдер ограничил запросы или исчерпан лимит API. Проверьте квоту и повторите позже.', 'PROVIDER_LIMIT');
-    }
-    if (/timeout|abort|timed.out|врем/i.test(message)) {
-      throw new ApiError(504, 'Модель не ответила вовремя. Повторите запуск или выберите более быструю модель.', 'PROVIDER_TIMEOUT');
-    }
-    if (/json|schema|формат|валидац|критери|доказатель|реплик/i.test(message)) {
-      throw new ApiError(422, `Модель вернула непроверяемый результат. ${message.slice(0, 500)}`, 'MODEL_OUTPUT_INVALID');
-    }
-    throw new ApiError(502, 'Не удалось получить ответ модели. Проверьте название модели, адрес API и доступ к сервису.', 'PROVIDER_ERROR');
+    throw failure;
   }
-  const results = normalizeResults(outcome.results);
-  return persistEvaluation({
-    ...inputs, results, source: 'ai', model: settings.model,
-    usage: outcome.usage, durationMs: outcome.durationMs, warnings: outcome.warnings,
-    runConfig: { promptRevision: EVALUATOR_REVISION, strictJson: settings.strictJson,
-      verification: settings.verification, knowledgeHash: await hash(settings.knowledge || '') },
-  });
 }
 
 export async function saveManualEvaluation(request: Request): Promise<Evaluation> {

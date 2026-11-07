@@ -352,3 +352,10 @@
 .studio-overview-footnote { color: #5b7163; }
 .studio-status-amber { color: #79591d; }
 .studio-standard small { color: #526958; }
+.studio-submission-entry { display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 25px 28px; border: 1px solid #d4e2cd; border-radius: 19px; background: linear-gradient(110deg, #f8fbee, #edf4e7); }
+.studio-submission-entry > div { max-width: 610px; }
+.studio-submission-entry h2 { margin: 8px 0; color: #143c2c; font-size: 21px; letter-spacing: -.6px; }
+.studio-submission-entry p { margin: 0; color: #50654f; font-size: 12px; line-height: 1.8; }
+.studio-submission-entry > button { flex-shrink: 0; }
+@media (max-width: 1000px) { .studio-submission-entry { align-items: flex-start; flex-direction: column; gap: 18px; } }
+@media (max-width: 520px) { .studio-submission-entry { padding: 21px 18px; } .studio-submission-entry h2 { font-size: 19px; } .studio-submission-entry > button { width: 100%; justify-content: center; } }

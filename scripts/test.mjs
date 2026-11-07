@@ -6,7 +6,7 @@ mkdirSync(output, { recursive: true });
 const compiler = spawnSync(process.execPath, [
   'node_modules/typescript/bin/tsc', '--target', 'ES2022', '--module', 'commonjs',
   '--moduleResolution', 'node', '--esModuleInterop', '--skipLibCheck', '--strict',
-  '--outDir', output, 'lib/types.ts', 'lib/rubric.ts', 'lib/scoring.ts', 'lib/evaluator.ts', 'lib/calibration.ts',
+  '--outDir', output, 'lib/types.ts', 'lib/rubric.ts', 'lib/scoring.ts', 'lib/evaluator.ts', 'lib/calibration.ts', 'lib/submission.ts',
 ], { stdio: 'inherit' });
 if (compiler.status !== 0) process.exit(compiler.status ?? 1);
 writeFileSync(resolve(output, 'package.json'), '{"type":"commonjs"}\n');

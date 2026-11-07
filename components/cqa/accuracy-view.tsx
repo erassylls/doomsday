@@ -99,7 +99,7 @@ export function AccuracyView({ state, referenceIds, model, revision, onModelChan
         {!pairs.length && <p className="panel-inline-empty">В выбранных парах все критерии совпали.</p>}
       </section>
     </>}
-    <div className="notice notice-soft"><Info size={18} /><span>Это внутренняя проверка на выбранной вами разметке. Ground Truth организаторов и их итоговый отбор оцениваются отдельно. При малом числе диалогов метрики могут заметно меняться.</span></div>
+    <div className="notice notice-soft"><Info size={18} /><span>Это внутренняя проверка на выбранной вами разметке. Ground Truth организаторов и их итоговый отбор оцениваются отдельно. Для 10 контрольных чатов используется раздел «Сдача результатов» и формат results/prod/results.json; этот отчёт нужен для внутреннего анализа. При малом числе диалогов метрики могут заметно меняться.</span></div>
   </div>;
 }
 

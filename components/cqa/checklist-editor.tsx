@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Plus, Trash2, Save, RotateCcw, ListChecks, ShieldCheck, ChevronDown, ArrowRight } from 'lucide-react';
 import type { Checklist, Criterion } from '@/lib/types';
 import { CHECKLIST_TEMPLATE_CHANGES, CHECKLIST_TEMPLATE_REVISION, DEFAULT_CHECKLIST, validateChecklist } from '@/lib/rubric';
+import { SUBMISSION_CRITERIA, checklistSubmissionIssues } from '@/lib/submission';
 import { api, Pill, Spinner, shortDate } from './shared';
 
 export function ChecklistEditor({ checklist, all, onSelect, onSaved }: {
@@ -26,6 +27,7 @@ export function ChecklistEditor({ checklist, all, onSelect, onSaved }: {
   const weighted = criteria.filter((criterion) => criterion.kind !== 'flag');
   const weight = weighted.reduce((sum, criterion) => sum + (Number(criterion.weight) || 0), 0);
   const issues = validateChecklist(criteria);
+  const submissionIssues = checklist ? checklistSubmissionIssues({ ...checklist, criteria }) : [];
   function update(id: string, update: Partial<Criterion>) {
     setCriteria((current) => current.map((criterion) => criterion.id === id ? { ...criterion, ...update } : criterion));
   }
@@ -103,6 +105,7 @@ export function ChecklistEditor({ checklist, all, onSelect, onSaved }: {
       <Pill tone={changed ? 'amber' : 'green'} dot>{changed ? 'Есть изменения' : 'Версия сохранена'}</Pill>
     </div>
     <div className="notice notice-soft"><ShieldCheck size={18} /><span>Сохранение создаёт новую версию. Уже выполненные оценки сохраняют свои правила. При N/A применимые веса пересчитываются до 100 баллов.</span></div>
+    <div className={'notice ' + (submissionIssues.length ? 'notice-warning' : 'notice-soft')} role="status"><ShieldCheck size={18} /><div><strong>{submissionIssues.length ? (changed ? 'Этот черновик несовместим с форматом сдачи' : 'Выбранная версия несовместима с форматом сдачи') : 'Конфигурация совместима с JSON 1.0'}</strong><p>Для сдачи нужны 8 критериев с фиксированными кодами, весами, шкалами и условиями доступности N/A. Правильность оценок проверяется отдельно.</p>{submissionIssues.length > 0 && <ul>{submissionIssues.slice(0, 4).map((issue, index) => <li key={index}>{issue.message}</li>)}</ul>}</div></div>
     <section className="panel template-panel">
       <div className="template-heading"><div><span className="eyebrow">Правила организаторов · уточнения {CHECKLIST_TEMPLATE_REVISION}</span><h2>Меньше неоднозначных оценок</h2><p>Шаблон сохраняет 8 критериев, исходные веса и ступени. Пояснения помогают одинаково трактовать спорные случаи.</p></div><button className="button secondary" disabled={busy || changed} onClick={applyTemplate}><ListChecks size={16} />Применить шаблон</button></div>
       <details className="template-changes"><summary>Что уточнено в правилах<ChevronDown size={15} /></summary><ul>{CHECKLIST_TEMPLATE_CHANGES.map((change) => <li key={change}>{change}</li>)}</ul></details>
@@ -155,7 +158,7 @@ export function ChecklistEditor({ checklist, all, onSelect, onSaved }: {
             <label className="checkbox-label"><input type="checkbox" checked={criterion.allowNA} onChange={(event) => update(criterion.id, { allowNA: event.target.checked })} /><strong>Разрешить N/A</strong><span className="muted">Критерий может быть неприменим</span></label>
             {criterion.allowNA && <label className="form-field">Условие неприменимости<textarea className="field" rows={2} value={criterion.naCondition} onChange={(event) => update(criterion.id, { naCondition: event.target.value })} placeholder="Укажите точное условие для ответа N/A." /></label>}
           </div>}
-          <div className="editor-footer"><span className="muted small">ID: {criterion.id}</span><button className="button danger-text small-button" onClick={() => removeCriterion(criterion.id)}><Trash2 size={14} />Удалить критерий</button></div>
+          <div className="editor-footer"><span className="muted small">ID: {criterion.id}{SUBMISSION_CRITERIA.find((item) => item.internalId === criterion.id) && <> · Код в results.json: <code>{SUBMISSION_CRITERIA.find((item) => item.internalId === criterion.id)?.id}</code></>}</span><button className="button danger-text small-button" onClick={() => removeCriterion(criterion.id)}><Trash2 size={14} />Удалить критерий</button></div>
         </div>
       </details>)}
     </div>

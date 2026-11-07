@@ -1,5 +1,6 @@
 export type Speaker = 'client' | 'operator' | 'bot' | 'system';
 export type Language = 'RU' | 'KZ' | 'EN';
+export type ModelMode = 'local' | 'external_api' | 'hybrid';
 export interface Message { id: string; timestamp: string; speaker: Speaker; text: string }
 export interface Conversation {
   id: string; conversation_id: string; dataset_group_id: string;
@@ -29,6 +30,7 @@ export interface ScoreReport {
 export interface Usage { inputTokens: number; outputTokens: number; calls: number; costUsd: number | null }
 export interface EvaluationRunConfig {
   promptRevision: string; strictJson: boolean; verification: boolean; knowledgeHash: string;
+  modelMode?: ModelMode;
 }
 export interface Evaluation {
   id: string; conversationId: string; checklist: Checklist;
@@ -37,6 +39,11 @@ export interface Evaluation {
   source: 'ai' | 'manual'; model: string; createdAt: string; updatedAt: string;
   usage: Usage; durationMs: number; warnings: string[]; transcriptHash: string;
   runConfig?: EvaluationRunConfig;
+}
+export interface EvaluationFailure {
+  id: string; conversationId: string; checklistId: string;
+  model: string; modelMode: ModelMode; error: string; code: string;
+  createdAt: string; transcriptHash: string;
 }
 export interface Appeal {
   id: string; evaluationId: string; conversationId: string; criterionId: string;
@@ -47,24 +54,27 @@ export interface Appeal {
 export interface ProviderSettings {
   baseUrl: string; model: string; inputPrice: number | null; outputPrice: number | null;
   strictJson: boolean; verification: boolean; knowledge: string;
+  modelMode?: ModelMode;
 }
 export interface AppState {
   conversations: Conversation[]; checklists: Checklist[]; activeChecklistId: string;
   evaluations: Evaluation[]; appeals: Appeal[]; settings: ProviderSettings;
+  evaluationFailures?: EvaluationFailure[];
   providerConfigured: boolean; datasetConfigured: boolean;
 }
 export const DEFAULT_SETTINGS: ProviderSettings = {
   baseUrl: 'https://api.openai.com/v1', model: '', inputPrice: null, outputPrice: null,
-  strictJson: true, verification: false, knowledge: '',
+  strictJson: true, verification: false, knowledge: '', modelMode: 'external_api',
 };
 
 /* HTTP contract:
- * GET  /api/state -> AppState
+ * GET  /api/state -> AppState (including persisted evaluationFailures)
  * POST /api/import {groupId:string} OR {payload:organizerResponse|records[],groupId?:string}
  *      -> {count:number,groupId:string}; original data never embedded in source.
  * POST /api/checklists {name,criteria} -> Checklist (new immutable version; active)
  * POST /api/settings ProviderSettings -> {ok:true}; API keys are NEVER stored here.
  * POST /api/evaluate {conversationId,checklistId?,apiKey?:string} -> Evaluation
+ *      Failed attempts are stored separately with a reason; no zero/fake evaluation is created.
  * POST /api/manual {conversationId,checklistId?,results:CriterionResult[]} -> Evaluation
  * POST /api/appeals {evaluationId,criterionId,comment,proposedValue?:Rating} -> Appeal
  * POST /api/appeals/resolve {appealId,decision:'confirm'|'change',value?:Rating,reason:string,
