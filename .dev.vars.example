@@ -1,0 +1,6 @@
+# Copy to .dev.vars. Real values must never be committed.
+DATASET_API_URL="PASTE_THE_ORGANIZERS_DEV_GET_URL_HERE"
+# Optional server-side provider. Alternatively enter your own key in the app
+# for the current tab only. A model ID is always configurable in Settings.
+# OPENAI_API_KEY="YOUR_API_KEY"
+# OPENAI_BASE_URL="https://api.openai.com/v1"
